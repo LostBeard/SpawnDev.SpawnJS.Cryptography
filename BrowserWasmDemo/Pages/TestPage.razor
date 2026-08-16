@@ -1,0 +1,189 @@
+﻿@page "/"
+@page "/test"
+@using System.Text
+@using SpawnDev.SpawnJS
+@using SpawnDev.SpawnJS.Cryptography
+@using SpawnDev.SpawnJS.JSObjects
+
+<PageTitle>PortableCrypto Test</PageTitle>
+
+<h1>PortableCrypto Test</h1>
+
+<button class="btn btn-primary" disabled="@Busy" @onclick="SubtleCryptoRsaOaepEncryptDecryptTest">Run Test</button>
+
+@code {
+    static string TestString = "Hello world!";
+
+    private int currentCount = 0;
+
+    [Inject]
+    BrowserWASMCrypto BrowserWASMCrypto { get; set; } = default!;
+
+    int BusyCount = 0;
+    bool Busy => BusyCount > 0;
+
+    /// <summary>
+    /// Tests signing and verification<br/>
+    /// https://github.com/mdn/dom-examples/blob/main/web-crypto/sign-verify/rsa-pss.js
+    /// </summary>
+    /// <returns></returns>
+    /// <exception cref="Exception"></exception>
+    public async Task SubtleCryptoSignVerifyTest()
+    {
+        if (!Crypto.IsSupported)
+        {
+            throw new Exception("Crypto not supported by browser.");
+        }
+        using var crypto = new Crypto();
+        using var subtle = crypto.Subtle;
+        var keyPair = await subtle.GenerateKey<CryptoKeyPair>(
+            new RsaHashedKeyGenParams
+            {
+                Name = "RSA-PSS",
+                ModulusLength = 4096,
+                PublicExponent = new byte[] { 1, 0, 1 },
+                Hash = "SHA-256"
+            },
+            true,
+            new string[] { "sign", "verify" }
+        );
+        var testString = "Hello Crypto!";
+        var data = await StringToArrayBuffer(testString);
+        var signature = await SignDataWithPrivateKey(data, keyPair.PrivateKey!);
+        var verified = await VerifyDataSignatureWithPublicKey(signature, data, keyPair.PublicKey!);
+        if (!verified) throw new Exception("Unexpected result");
+    }
+
+    async Task<ArrayBuffer> SignDataWithPrivateKey(ArrayBuffer data, CryptoKey key)
+    {
+        using var crypto = new Crypto();
+        using var subtle = crypto.Subtle;
+        var ret = await subtle.Sign(new RsaPssParams(), key, data);
+        return ret;
+    }
+
+    async Task<bool> VerifyDataSignatureWithPublicKey(ArrayBuffer signature, ArrayBuffer data, CryptoKey key)
+    {
+        using var crypto = new Crypto();
+        using var subtle = crypto.Subtle;
+        var ret = await subtle.Verify(new RsaPssParams(), key, signature, data);
+        return ret;
+    }
+    public static byte[] Base64UrlEncoderDecodeBytes(string str)
+    {
+        string incoming = str.Replace('_', '/').Replace('-', '+');
+        switch (str.Length % 4)
+        {
+            case 2: incoming += "=="; break;
+            case 3: incoming += "="; break;
+        }
+        byte[] bytes = Convert.FromBase64String(incoming);
+        return bytes;
+    }
+    static readonly char[] padding = { '=' };
+    public static string Base64UrlEncoderEncodeBytes(byte[] toEncodeAsBytes)
+    {
+        return System.Convert.ToBase64String(toEncodeAsBytes).TrimEnd(padding).Replace('+', '-').Replace('/', '_');
+    }
+
+    public async Task SubtleCryptoRsaOaepEncryptDecryptTest()
+    {
+        if (!Crypto.IsSupported)
+        {
+            throw new Exception("Crypto not supported by browser.");
+        }
+        using var crypto = new Crypto();
+        using var subtle = crypto.Subtle;
+        var keyPair = await subtle.GenerateKey<CryptoKeyPair>(
+            new RsaHashedKeyGenParams
+            {
+                Name = "RSA-OAEP",
+                ModulusLength = 4096,
+                PublicExponent = new byte[] { 1, 0, 1 },
+                Hash = "SHA-256"
+            },
+            true,
+            new string[] { "encrypt", "decrypt" }
+        );
+        var testString = "Hello Crypto!";
+        var encryptedText = await EncryptDataWithPublicKey(testString, keyPair.PublicKey!);
+        var decryptedText = await DecryptDataWithPrivateKey(encryptedText, keyPair.PrivateKey!);
+        if (testString != decryptedText) throw new Exception("Unexpected result");
+
+        // Now test exporting and then importing the private key (for testing only)
+        // export private key
+        var privateKey = await subtle.ExportKey<ArrayBuffer>("pkcs8", keyPair.PrivateKey!);
+        // convert exported private key to a base64 string
+        var stringPrivateKey = ArrayBufferToBase64(privateKey);
+
+        // now the import steps from string
+        // convert base64 private key string back to ArrayBuffer
+        var arrayBufferPrivateKey = Base64ToArrayBuffer(stringPrivateKey);
+        // import private key from ArrayBuffer
+        var privateKeyImported = await subtle.ImportKey("pkcs8", arrayBufferPrivateKey, new RsaHashedImportParams { Name = "RSA-OAEP", Hash = "SHA-256" }, true, new string[] { "decrypt" });
+
+        // use the imported key (should provide same results as above)
+        // convert encrypted ArrayBuffer to base64 string
+        var encryptedTextBase64 = ArrayBufferToBase64(encryptedText);
+
+        // convert encrypted base64 string to ArrayBuffer
+
+        // fetch based Base64ToArrayBuffer implementation - Not CSP compatible (for testing only)
+        //var encryptedArrayBuffer = await Base64ToArrayBufferFetch(encryptedTextBase64);
+
+        // atob based Base64ToArrayBuffer implementation - CSP compatible (for testing only)
+        //var encryptedArrayBuffer = Base64ToArrayBufferAtoB(encryptedTextBase64);
+
+        // C# based Base64ToArrayBuffer - CSP compatible
+        var encryptedArrayBuffer = Base64ToArrayBuffer(encryptedTextBase64);
+
+        // decrypt using imported private key
+        var decryptedText2AB = await subtle.Decrypt(new EncryptParams { Name = "RSA-OAEP" }, privateKeyImported, encryptedArrayBuffer);
+        var decryptedText2 = await ArrayBufferToString(decryptedText2AB);
+        if (testString != decryptedText2) throw new Exception("Unexpected result");
+    }
+
+    async Task<ArrayBuffer> EncryptDataWithPublicKey(string data, CryptoKey key)
+    {
+        using var crypto = new Crypto();
+        using var subtle = crypto.Subtle;
+        var dataAB = await StringToArrayBuffer(data);
+        var ret = await subtle.Encrypt(new EncryptParams { Name = "RSA-OAEP" }, key, dataAB);
+        return ret;
+    }
+
+    async Task<string> DecryptDataWithPrivateKey(ArrayBuffer data, CryptoKey key)
+    {
+        using var crypto = new Crypto();
+        using var subtle = crypto.Subtle;
+        var ret = await subtle.Decrypt(new EncryptParams { Name = "RSA-OAEP" }, key, data);
+        var dataStr = await ArrayBufferToString(ret);
+        return dataStr;
+    }
+
+    async Task<ArrayBuffer> StringToArrayBuffer(string data)
+    {
+        using var blob = new Blob(new string[] { data }, new BlobOptions { Type = "text/plain; charset=utf-8" });
+        return await blob.ArrayBuffer();
+    }
+
+    async Task<string> ArrayBufferToString(ArrayBuffer data)
+    {
+        using var blob = new Blob(new ArrayBuffer[] { data });
+        return await blob.Text();
+    }
+
+    string ArrayBufferToBase64(ArrayBuffer arrayBuffer)
+    {
+        var bytes = arrayBuffer.ReadBytes();
+        return Convert.ToBase64String(bytes);
+    }
+
+    ArrayBuffer Base64ToArrayBuffer(string base64String)
+    {
+        var bytes = Convert.FromBase64String(base64String);
+        using var uint8Array = new Uint8Array(bytes);
+        return uint8Array.Buffer;
+    }
+
+}

@@ -1,0 +1,202 @@
+# SpawnDev.SpawnJS.Cryptography
+
+[![NuGet](https://badge.fury.io/nu/SpawnDev.SpawnJS.Cryptography.svg?delta=9&label=SpawnDev.SpawnJS.Cryptography)](https://www.nuget.org/packages/SpawnDev.SpawnJS.Cryptography)
+
+.Net cryptography library for .Net, .Net Web APIs, and .Net apps. Supports browser and non-browser platforms.
+
+### The problem this library solves
+Most of Microsoft's System.Security.Cryptography library is marked `[UnsupportedOSPlatform("browser")]`. To work around this limitation, the browser's built in [SubtleCrypto](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto) API is used when running in the browser and Microsoft's System.Security.Cryptography libraries are used when running on non-browser platforms.
+
+### Features
+- AES-GCM - symmetric encryption and decryption
+- AES-CBC - symmetric encryption and decryption
+- ECDH - shared secret generation (enables asymmetric encryption)
+- ECDSA - data signing and verification
+- Ed25519 - data signing and verification (EdDSA, RFC 8032)
+- SHA - data hashing
+
+### PortableCrypto Classes
+The classes `DotNetCrypto`, `BrowserWASMCrypto`, and `BrowserWASMCrypto` all inherit from [`PortableCrypto`](#portablecrypto-abstract-class) to provide a shared interface to common cryptography methods regardless of the platform the app is being executed on.
+
+### IPortableCrypto Interface
+PortableCrypto implements the IPortableCrypto interface. Therefore all implementing classes, `DotNetCrypto`, `BrowserWASMCrypto`, and `BrowserWASMCrypto`, implement it also.
+   
+**DotNetCrypto**  
+- Uses .Net System.Security.Cryptography on the executing platform
+- Browser platform not supported
+- Supports non-browser platforms (windows, linux, etc)
+- Targets .Net server, .Net Web APIs, any non-browser platform .Net Apps
+    
+**BrowserWASMCrypto**
+- Uses SpawnJSRuntime to access the browser's [SubtleCrypto](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto) API
+- Supports only WebAssembly rendering
+- Targets the browser via .Net WebAssembly
+
+### Getting started
+
+Add the Nuget package
+```nuget
+dotnet add package SpawnDev.SpawnJS.Cryptography
+```
+
+#### .Net Server Project
+.Net Server Program.cs
+```cs
+// Crypto for the server. Uses System.Security.Cryptography.
+builder.Services.AddSingleton<DotNetCrypto>();
+```
+
+#### .Net WebAssembly
+WebAssembly Program.cs 
+```cs
+// Add SpawnJSRuntime service
+builder.Services.AddSpawnJSRuntime();
+
+// Crypto for the browser. Uses the browser's SubtleCrypto API via IJSInProcessRuntime.
+// Supports only WebAssembly rendering
+builder.Services.AddScoped<BrowserWASMCrypto>();
+```
+
+### SHA Example
+- The below example, taken from the demo project, runs in .Net server side rendering to test SHA hashing using the DotNetCrypto on the server and BrowserWASMCrypto using SpawnJSRuntime to run on the client browser.
+```cs
+var data = new byte[] { 0, 1, 2 };
+// - Server
+// DotNetCrypto indicated by the appended D, executes on the server using Microsoft.Security.Cryptography
+var hashD = await DotNetCrypto.Digest("SHA-512", data);
+
+// - Browser
+// BrowserWASMCrypto indicated by the appended B, executes on the browser using Javascript's SubtleCrypto APIs
+var hashB = await BrowserWASMCrypto.Digest("SHA-512", data);
+
+// verify the hashes match
+if (!hashB.SequenceEqual(hashD))
+{
+    throw new Exception("Hash mismatch");
+}
+```
+
+### ECDH Example
+- The below example, taken from the demo project, runs in .Net server side rendering to test ECDH using the DotNetCrypto on the server and BrowserWASMCrypto using IJSRuntime to run on the client browser.
+```cs
+// - Server
+// generate server ECDH key
+var ecdhD = await DotNetCrypto.GenerateECDHKey();
+// export ecdhD public key for browser to use
+var ecdhDPublicKeyBytes = await DotNetCrypto.ExportPublicKeySpki(ecdhD);
+
+// - Browser
+// generate browser ECDH key
+var ecdhB = await BrowserWASMCrypto.GenerateECDHKey();
+// export ecdhB public key for server to use
+var ecdhBPublicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ecdhB);
+
+// - Server
+// import the browser's ECDH public key using DotNetCrypto so DotNetCrypto can work with it
+var ecdhBPublicKeyD = await DotNetCrypto.ImportECDHKey(ecdhBPublicKeyBytes);
+// create shared secret
+var sharedSecretD = await DotNetCrypto.DeriveBits(ecdhD, ecdhBPublicKeyD);
+
+// - Browser
+// import the server's ECDH public key using BrowserWASMCrypto so BrowserWASMCrypto can work with it
+var ecdhDPublicKeyB = await BrowserWASMCrypto.ImportECDHKey(ecdhDPublicKeyBytes);
+// create shared secret
+var sharedSecretB = await BrowserWASMCrypto.DeriveBits(ecdhB, ecdhDPublicKeyB);
+
+// verify the shared secrets match
+if (!sharedSecretB.SequenceEqual(sharedSecretD))
+{
+    throw new Exception("Shared secret mismatch");
+}
+```
+
+## PortableCrypto Abstract Class
+
+### SHA - Data Hashing
+
+#### `Task<byte[]> Digest(string hashName, byte[] data)`
+- Hash the specified data using the specified hash algorithm
+
+### ECDH - Shared secret generation
+
+#### `Task<PortableECDHKey> GenerateECDHKey(string namedCurve = NamedCurve.P521, bool extractable = true)`
+- Generate a new ECDH crypto key
+
+#### `Task<byte[]> ExportPublicKeySpki(PortableECDHKey key)`
+- Export the ECDH public key in Spki format
+
+#### `Task<byte[]> ExportPrivateKeyPkcs8(PortableECDHKey key)`
+- Export the ECDH private key in Pkcs8 format
+
+#### `Task<PortableECDHKey> ImportECDHKey(byte[] publicKeySpki, string namedCurve = NamedCurve.P521, bool extractable = true)`
+- Import the ECDH public key
+
+#### `Task<PortableECDHKey> ImportECDHKey(byte[] publicKeySpki, byte[] privateKeyPkcs8, string namedCurve = NamedCurve.P521, bool extractable = true)`
+- Import the ECDH private key
+
+#### `Task<byte[]> DeriveBits(PortableECDHKey localPartyKey, PortableECDHKey otherPartyKey, int bitLength)`
+- Create a shared secret that is cross-platform compatible
+
+#### `Task<byte[]> DeriveBits(PortableECDHKey localPartyKey, PortableECDHKey otherPartyKey)`
+- Create a shared secret that is cross-platform compatible
+
+### ECDSA - Data Signing
+
+#### `Task<PortableECDSAKey> GenerateECDSAKey(string namedCurve = NamedCurve.P521, bool extractable = true)`
+- Generate a new ECDSA key
+
+#### `Task<byte[]> ExportPublicKeySpki(PortableECDSAKey key)`
+- Exports the ECDSA public key in Spki format
+
+#### `Task<byte[]> ExportPrivateKeyPkcs8(PortableECDSAKey key)`
+- Exports the ECDSA private key in Pkcs8 format
+
+#### `Task<PortableECDSAKey> ImportECDSAKey(byte[] publicKeySpkiData, string namedCurve = NamedCurve.P521, bool extractable = true)`
+- Import an ECDSA public key
+
+#### `Task<PortableECDSAKey> ImportECDSAKey(byte[] publicKeySpkiData, byte[] privateKeyPkcs8Data, string namedCurve = NamedCurve.P521, bool extractable = true)`
+- Import an ECDSA public and private key
+
+#### `Task<bool> Verify(PortableECDSAKey key, byte[] data, byte[] signature, string hashName = HashName.SHA512)`
+- Verify a data signature
+
+#### `Task<byte[]> Sign(PortableECDSAKey key, byte[] data, string hashName = HashName.SHA512)`
+- Sign data using an ECDSA key
+
+### Ed25519 - Data Signing (EdDSA, RFC 8032)
+Ed25519 uses a fixed curve (Curve25519) and fixed hash (SHA-512). No curve or hash parameters needed. Browser backends use WebCrypto when available (Chrome 137+, Firefox 129+, Safari 17+), with automatic fallback to a pure managed C# implementation on older browsers.
+
+#### `Task<PortableEd25519Key> GenerateEd25519Key(bool extractable = true)`
+- Generate a new Ed25519 key pair
+
+#### `Task<byte[]> ExportPublicKeySpki(PortableEd25519Key key)`
+- Export the Ed25519 public key in SPKI format
+
+#### `Task<byte[]> ExportPrivateKeyPkcs8(PortableEd25519Key key)`
+- Export the Ed25519 private key in PKCS8 format
+
+#### `Task<PortableEd25519Key> ImportEd25519Key(byte[] publicKeySpkiData, bool extractable = true)`
+- Import an Ed25519 public key
+
+#### `Task<PortableEd25519Key> ImportEd25519Key(byte[] publicKeySpkiData, byte[] privateKeyPkcs8Data, bool extractable = true)`
+- Import an Ed25519 public and private key
+
+#### `Task<byte[]> Sign(PortableEd25519Key key, byte[] data)`
+- Sign data using an Ed25519 key
+
+#### `Task<bool> Verify(PortableEd25519Key key, byte[] data, byte[] signature)`
+- Verify an Ed25519 signature
+
+### AES-GCM - Data Encryption
+
+#### `Task<PortableAESGCMKey> GenerateAESGCMKey(byte[] secret, int iterations = 25000, string hashName = HashName.SHA256, int keySizeBytes = 32, int tagSizeBytes = 16, int nonceSizeBytes = 12, bool extractable = true)`
+- Generate an AES-GCM key using a secret byte array
+
+#### `Task<PortableAESGCMKey> GenerateAESGCMKey(byte[] secret, byte[] salt, int iterations = 25000, string hashName = HashName.SHA256, int keySizeBytes = 32, int tagSizeBytes = 16, int nonceSizeBytes = 12, bool extractable = true)`
+- Generate an AES-GCM key using a secret byte array and a salt
+
+#### `Task<byte[]> Encrypt(PortableAESGCMKey key, byte[] plainBytes)`
+- Encrypt data using an AES-GCM key
+
+#### `Task<byte[]> Decrypt(PortableAESGCMKey key, byte[] encryptedData)`
+- Decrypt data using an AES-GCM key
