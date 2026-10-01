@@ -4,8 +4,8 @@
 		<TargetFrameworks>net10.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<Version>2.1.0</Version>
-		<PackageReleaseNotes>v2.1.0 - SpawnDev.SpawnJS 3.0.0. Restored the browser + cross-platform (DotNetCrypto) test suite.</PackageReleaseNotes>
+		<Version>2.1.1-local.1</Version>
+		<PackageReleaseNotes>v2.1.1 - Trim and NativeAOT safe, enforced (IsTrimmable, IsAotCompatible, IL warnings are build errors). The 29-test browser suite passes with this library trimmed.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
@@ -20,6 +20,10 @@
 		<RepositoryUrl>https://github.com/LostBeard/SpawnDev.SpawnJS.Cryptography.git</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 		<PackageTags>DotNetWebAssembly;Cryptography;ECDSA;ECDH;Ed25519;EdDSA;SHA;AES-GCM;WebBrowser</PackageTags>
+		<!-- Trim and NativeAOT safe, enforced: the analyzers run on every build and any IL2xxx/IL3xxx warning fails it. -->
+		<IsTrimmable>true</IsTrimmable>
+		<IsAotCompatible>true</IsAotCompatible>
+		<WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2060;IL2062;IL2065;IL2067;IL2069;IL2070;IL2072;IL2073;IL2074;IL2075;IL2076;IL2077;IL2078;IL2080;IL2087;IL2088;IL2089;IL2090;IL2091;IL2092;IL2093;IL2094;IL2095;IL2106;IL2111;IL2112;IL2113;IL2114;IL3050;IL3051</WarningsAsErrors>
 	</PropertyGroup>
 
 	<ItemGroup>
