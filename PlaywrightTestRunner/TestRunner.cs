@@ -26,7 +26,7 @@ namespace PlaywrightTestRunner
         /// <summary>
         /// This environment value should be set by the batch file that calls this script
         /// </summary>
-        protected string TestProjectDirName = Environment.GetEnvironmentVariable("TestProjectDirName") ?? "";
+        protected string TestProjectDirName = Environment.GetEnvironmentVariable("TestProjectDirName") ?? "BrowserWasmDemo";
         /// <summary>
         /// Unit test page
         /// </summary>
@@ -46,7 +46,7 @@ namespace PlaywrightTestRunner
         [OneTimeSetUp]
         public async Task StartApp()
         {
-            var unitTestPages = Environment.GetEnvironmentVariable("UnitTestPage") ?? "";
+            var unitTestPages = Environment.GetEnvironmentVariable("UnitTestPage") ?? "tests";
             UnitTestPages = unitTestPages.Split(',', StringSplitOptions.TrimEntries).Distinct().ToArray();
 
             // get the directory that contains the project being tested
@@ -76,6 +76,16 @@ namespace PlaywrightTestRunner
 
             if (projectType == ProjectType.BlazorWasm)
             {
+                // Publish first so a run can never test a stale build (the publish folder outlives the source).
+                var publish = Process.Start(new ProcessStartInfo("dotnet", $"publish \"{projectPath}\" -c Release")
+                {
+                    WorkingDirectory = projectDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                })!;
+                await publish.WaitForExitAsync();
+                if (publish.ExitCode != 0) throw new Exception($"dotnet publish failed ({publish.ExitCode}) for {projectPath}");
+
                 // create https server for testing using StaticFileServer
                 // uses the included self signed certificate for unit testing: assets/testcert.pfx
                 staticFileServer = new StaticFileServer(wwwRootPath, BaseUrl);
@@ -177,6 +187,9 @@ namespace PlaywrightTestRunner
 
             // iterate the rows
             int rowCount = await rows.CountAsync();
+            // an empty table must fail, not pass with zero tests run
+            Assert.That(rowCount, Is.GreaterThan(0), $"No unit tests found on page '{page}'");
+            TestContext.Out.WriteLine($"{page}: {rowCount} tests");
             for (int i = 0; i < rowCount; i++)
             {
                 // get the specific row by index
@@ -206,6 +219,7 @@ namespace PlaywrightTestRunner
                 {
                     throw new Exception($"Failed - {typeName}.{methodName}\nTest-error: {stateMessage}");
                 }
+                TestContext.Out.WriteLine($"  PASS {methodName}: {stateMessage}");
             }
         }
 

@@ -32,6 +32,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- DotNetCrypto: the cross-platform half of the browser tests (served from the test server). -->
+		<ProjectReference Include="..\SpawnDev.SpawnJS.Cryptography\SpawnDev.SpawnJS.Cryptography.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<Using Include="Microsoft.Playwright.NUnit" />
 		<Using Include="NUnit.Framework" />
 		<Using Include="System.Text.RegularExpressions" />

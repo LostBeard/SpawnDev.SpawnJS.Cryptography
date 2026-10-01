@@ -57,6 +57,9 @@ namespace PlaywrightTestRunner
 
                 app = builder.Build();
 
+                // DotNetCrypto endpoints for the browser's CrossPlatform_* tests (same origin as the app)
+                app.MapCryptographyTestApi();
+
                 // (optional) add headers that enables: window.crossOriginIsolated == true
                 app.Use(async (context, next) =>
                 {

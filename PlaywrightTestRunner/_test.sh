@@ -2,11 +2,11 @@
 set -e
 
 # test project's directory name
-TestProjectDirName="SpawnDev.SpawnJS.Cryptography.Demo/SpawnDev.SpawnJS.Cryptography.Demo"
+TestProjectDirName="BrowserWasmDemo"
 export TestProjectDirName="$TestProjectDirName"
 
 # The page that serves the unit tests
-UnitTestPage=",WasmUnitTests"
+UnitTestPage="tests"
 export UnitTestPage="$UnitTestPage"
 
 # save the original directory
@@ -18,17 +18,7 @@ ScriptDir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # switch to the script's directory
 cd "$ScriptDir"
 
-# switch to the test project's dirctory
-cd ../$TestProjectDirName
-
-# verify execute flag is set 
-chmod +x _publish.sh
-
-# run the test project's _publish script to get a published version for testing
-bash ./_publish.sh
-
-# switch to the Playwright test runner project directory (where this is)
-cd "$ScriptDir"
+# TestRunner publishes the test project itself (dotnet publish -c Release) before serving it
 
 echo "Preparing tests"
 dotnet restore

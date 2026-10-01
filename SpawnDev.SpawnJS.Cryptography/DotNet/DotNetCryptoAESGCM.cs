@@ -56,8 +56,8 @@ namespace SpawnDev.SpawnJS.Cryptography
         {
             var hashAlgorithm = HashNameToHashAlgorithmName(hashName);
             // get encrypted message and decrypt using shared secret
-            using var pbkdf2 = new Rfc2898DeriveBytes(secret, salt, iterations, hashAlgorithm);
-            var key = new AesGcm(pbkdf2.GetBytes(keySizeBytes), tagSizeBytes);
+            // same bytes as new Rfc2898DeriveBytes(...).GetBytes(keySizeBytes) (that constructor is obsolete, SYSLIB0060)
+            var key = new AesGcm(Rfc2898DeriveBytes.Pbkdf2(secret, salt, iterations, hashAlgorithm, keySizeBytes), tagSizeBytes);
             return Task.FromResult<PortableAESGCMKey>(new DotNetAESGCMKey(key, nonceSizeBytes));
         }
         /// <summary>

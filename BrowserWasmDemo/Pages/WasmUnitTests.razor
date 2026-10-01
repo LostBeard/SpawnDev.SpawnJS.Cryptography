@@ -1,0 +1,392 @@
+@page "/WasmUnitTests"
+@page "/tests"
+@using SpawnDev.SpawnJS.Cryptography
+@using SpawnDev.UnitTesting
+@using SpawnDev.UnitTesting.Browser
+@using System.Reflection
+@using System.Text
+@using System.Net.Http.Json
+@using System.Security.Cryptography
+
+<PageTitle>Tests</PageTitle>
+
+<h1>Tests</h1>
+
+<div>
+    <ul>
+        <li>
+            BrowserWASMCrypto runs in the browser and uses the browser's SubtleCrypto API through SpawnDev.SpawnJS.
+        </li>
+        <li>
+            CrossPlatform_* tests call DotNetCrypto on the test server (api/CryptographyTest, hosted by
+            PlaywrightTestRunner) to prove keys, signatures and ciphertext move between the browser and .NET.
+        </li>
+    </ul>
+</div>
+
+<UnitTestsView TypeInstanceResolver="TestTypeResolver" TestAssemblies="Assemblies" TestTypes="Types"></UnitTestsView>
+
+@code {
+    [Inject]
+    BrowserWASMCrypto BrowserWASMCrypto { get; set; } = default!;
+
+    [Inject]
+    HttpClient Http { get; set; } = default!;
+
+    List<Assembly>? Assemblies = new List<Assembly>();
+    List<Type>? Types = new List<Type>();
+
+    static string TestMessage = "Hello world!";
+    byte[] TestMessageBytes = Encoding.UTF8.GetBytes(TestMessage);
+
+    protected override void OnInitialized()
+    {
+        Types = new List<Type> { this.GetType() };
+    }
+    object? TestTypeResolver(Type testType) => testType == this.GetType() ? this : null;
+
+    // ************************************ Generate, Export, Import ************************************
+    // SpawnDev.SpawnJS.Cryptography has one browser implementation, so these round-trip a key through
+    // export + import on BrowserWASMCrypto. Parity with .NET is covered by the CrossPlatform_* tests.
+    [TestMethod]
+    public async Task ECDHGenerateExportImportTest()
+    {
+        using var ecdhKey = await BrowserWASMCrypto.GenerateECDHKey("P-521");
+        var ecdhPublicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ecdhKey);
+        var ecdhPrivateKeyBytes = await BrowserWASMCrypto.ExportPrivateKeyPkcs8(ecdhKey);
+        using var ecdhKeyImported = await BrowserWASMCrypto.ImportECDHKey(ecdhPublicKeyBytes, ecdhPrivateKeyBytes, "P-521");
+        var ecdhImportedPublicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ecdhKeyImported);
+        if (!ecdhImportedPublicKeyBytes.SequenceEqual(ecdhPublicKeyBytes))
+            throw new Exception("Exported public keys do not match");
+        var ecdhImportedPrivateKeyBytes = await BrowserWASMCrypto.ExportPrivateKeyPkcs8(ecdhKeyImported);
+        if (!ecdhImportedPrivateKeyBytes.SequenceEqual(ecdhPrivateKeyBytes))
+            throw new Exception("Exported private keys do not match");
+    }
+    [TestMethod]
+    public async Task ECDSAGenerateExportImportTest()
+    {
+        using var ecdsaKey = await BrowserWASMCrypto.GenerateECDSAKey("P-521");
+        var ecdsaPublicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ecdsaKey);
+        var ecdsaPrivateKeyBytes = await BrowserWASMCrypto.ExportPrivateKeyPkcs8(ecdsaKey);
+        using var ecdsaKeyImported = await BrowserWASMCrypto.ImportECDSAKey(ecdsaPublicKeyBytes, ecdsaPrivateKeyBytes, "P-521");
+        var signature = await BrowserWASMCrypto.Sign(ecdsaKeyImported, TestMessageBytes, "SHA-512");
+        var verified = await BrowserWASMCrypto.Verify(ecdsaKeyImported, TestMessageBytes, signature, "SHA-512");
+        if (!verified) throw new Exception("Signature verification failed");
+    }
+    [TestMethod]
+    public async Task ECDHSharedSecretTest()
+    {
+        using var ecdhA = await BrowserWASMCrypto.GenerateECDHKey("P-521");
+        using var ecdhB = await BrowserWASMCrypto.GenerateECDHKey("P-521");
+        using var ecdhBPublic = await BrowserWASMCrypto.ImportECDHKey(await BrowserWASMCrypto.ExportPublicKeySpki(ecdhB), "P-521");
+        using var ecdhAPublic = await BrowserWASMCrypto.ImportECDHKey(await BrowserWASMCrypto.ExportPublicKeySpki(ecdhA), "P-521");
+        var secretA = await BrowserWASMCrypto.DeriveBits(ecdhA, ecdhBPublic);
+        var secretB = await BrowserWASMCrypto.DeriveBits(ecdhB, ecdhAPublic);
+        if (secretA.Length == 0 || !secretA.SequenceEqual(secretB))
+            throw new Exception("Shared secret mismatch");
+    }
+    [TestMethod]
+    public async Task ECDSASignAndVerify()
+    {
+        using var ecdsaKey = await BrowserWASMCrypto.GenerateECDSAKey("P-521");
+        var ecdsaPublicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ecdsaKey);
+        var signature = await BrowserWASMCrypto.Sign(ecdsaKey, TestMessageBytes, "SHA-512");
+        using var ecdsaPublicKeyImported = await BrowserWASMCrypto.ImportECDSAKey(ecdsaPublicKeyBytes, "P-521");
+        var verified = await BrowserWASMCrypto.Verify(ecdsaPublicKeyImported, TestMessageBytes, signature, "SHA-512");
+        if (!verified) throw new Exception("Signature verification failed");
+    }
+    [TestMethod]
+    public async Task ECDSAWrongMessageRejects()
+    {
+        using var key = await BrowserWASMCrypto.GenerateECDSAKey("P-521");
+        var signature = await BrowserWASMCrypto.Sign(key, TestMessageBytes, "SHA-512");
+        var verified = await BrowserWASMCrypto.Verify(key, Encoding.UTF8.GetBytes("Wrong message"), signature, "SHA-512");
+        if (verified) throw new Exception("ECDSA should reject wrong message");
+    }
+
+    // ************************************ Ed25519 ************************************
+    // Ed25519 is EdDSA - no namedCurve, no hashName (fixed SHA-512 internally).
+    [TestMethod]
+    public async Task Ed25519GenerateExportImportTest()
+    {
+        using var ed25519Key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var publicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ed25519Key);
+        var privateKeyBytes = await BrowserWASMCrypto.ExportPrivateKeyPkcs8(ed25519Key);
+        using var imported = await BrowserWASMCrypto.ImportEd25519Key(publicKeyBytes, privateKeyBytes);
+        var signature = await BrowserWASMCrypto.Sign(imported, TestMessageBytes);
+        // verify with the ORIGINAL key: the imported private key must be the same key, not just a valid one
+        var verified = await BrowserWASMCrypto.Verify(ed25519Key, TestMessageBytes, signature);
+        if (!verified) throw new Exception("Ed25519 export/import roundtrip signature verification failed");
+    }
+    [TestMethod]
+    public async Task Ed25519SignAndVerify()
+    {
+        using var ed25519Key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var publicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ed25519Key);
+        var signature = await BrowserWASMCrypto.Sign(ed25519Key, TestMessageBytes);
+        using var publicKeyImported = await BrowserWASMCrypto.ImportEd25519Key(publicKeyBytes);
+        var verified = await BrowserWASMCrypto.Verify(publicKeyImported, TestMessageBytes, signature);
+        if (!verified) throw new Exception("Ed25519 signature verification failed");
+    }
+    [TestMethod]
+    public async Task Ed25519WrongMessageRejects()
+    {
+        using var key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var signature = await BrowserWASMCrypto.Sign(key, TestMessageBytes);
+        var wrongMessage = Encoding.UTF8.GetBytes("Wrong message");
+        var verified = await BrowserWASMCrypto.Verify(key, wrongMessage, signature);
+        if (verified) throw new Exception("Ed25519 should reject wrong message");
+    }
+    [TestMethod]
+    public async Task Ed25519TamperedSignatureRejects()
+    {
+        using var key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var signature = await BrowserWASMCrypto.Sign(key, TestMessageBytes);
+        signature[0] ^= 0xFF;
+        var verified = await BrowserWASMCrypto.Verify(key, TestMessageBytes, signature);
+        if (verified) throw new Exception("Ed25519 should reject tampered signature");
+    }
+    [TestMethod]
+    public async Task Ed25519SignatureIs64Bytes()
+    {
+        using var key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var signature = await BrowserWASMCrypto.Sign(key, TestMessageBytes);
+        if (signature.Length != 64) throw new Exception($"Ed25519 signature should be 64 bytes, got {signature.Length}");
+    }
+    [TestMethod]
+    public async Task Ed25519SpkiIs44BytesPkcs8Is48Bytes()
+    {
+        using var key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var spki = await BrowserWASMCrypto.ExportPublicKeySpki(key);
+        var pkcs8 = await BrowserWASMCrypto.ExportPrivateKeyPkcs8(key);
+        if (spki.Length != 44) throw new Exception($"Ed25519 SPKI should be 44 bytes, got {spki.Length}");
+        if (pkcs8.Length != 48) throw new Exception($"Ed25519 PKCS8 should be 48 bytes, got {pkcs8.Length}");
+    }
+
+    // ************************************ AES ************************************
+    [TestMethod]
+    public async Task AESCBCTest()
+    {
+        using var key = await BrowserWASMCrypto.GenerateAESCBCKey(256);
+        var encrypted = await BrowserWASMCrypto.Encrypt(key, TestMessageBytes);
+        var decrypted = await BrowserWASMCrypto.Decrypt(key, encrypted);
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("AES CBC encryption/decryption failed");
+    }
+    [TestMethod]
+    public async Task AESCBCExportImportTest()
+    {
+        using var key = await BrowserWASMCrypto.GenerateAESCBCKey(256);
+        var encrypted = await BrowserWASMCrypto.Encrypt(key, TestMessageBytes);
+        var rawKey = await BrowserWASMCrypto.ExportAESCBCKey(key);
+        using var importedKey = await BrowserWASMCrypto.ImportAESCBCKey(rawKey);
+        var decrypted = await BrowserWASMCrypto.Decrypt(importedKey, encrypted);
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("AES CBC exported key failed to decrypt");
+    }
+    [TestMethod]
+    public async Task AESGCMTest()
+    {
+        var rawKey = RandomNumberGenerator.GetBytes(64);
+        using var key = await BrowserWASMCrypto.GenerateAESGCMKey(rawKey);
+        var encrypted = await BrowserWASMCrypto.Encrypt(key, TestMessageBytes);
+        // a second key from the same secret must decrypt it
+        using var key2 = await BrowserWASMCrypto.GenerateAESGCMKey(rawKey);
+        var decrypted = await BrowserWASMCrypto.Decrypt(key2, encrypted);
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("AES GCM encryption/decryption failed");
+    }
+
+    Dictionary<string, string> AESCBCTestData = new Dictionary<string, string>
+    {
+        { "Key", "d9c165aa46c3e36ad004d6f9bb340975" },
+        { "Iv", "1875cf3fd183bfb8486d1161c82ff82b" },
+        { "DecryptedData", "0566789f0000000042d31c8517457c0c78cfbdf18781e5c727106f22f5d9134f9bfd1db3fb6db07e4f9d000000000000" },
+        { "EncryptedData", "b937270aa14d6fd63380567882cdefffe7d1a2c1bb06cc385906db20c1dcb61e20831c10398f3ce200a5fa72885b10db" },
+    };
+
+    // Known-answer vectors from SpawnDev.BlazorJS.Cryptography issue #1 (AES-CBC without padding).
+    [TestMethod]
+    public async Task IssueNumber1_BrowserWASMCrypto_Test()
+    {
+        var decryptedData = Convert.FromHexString(AESCBCTestData["DecryptedData"]);
+        var rawKey = Convert.FromHexString(AESCBCTestData["Key"]);
+        using var nKey = await BrowserWASMCrypto.ImportAESCBCKey(rawKey);
+        var iv = Convert.FromHexString(AESCBCTestData["Iv"]);
+        var encryptedData = Convert.FromHexString(AESCBCTestData["EncryptedData"]);
+        var decrypted = await BrowserWASMCrypto.Decrypt(nKey, encryptedData, iv, AESCBCPadding.None);
+        if (!decrypted.SequenceEqual(decryptedData)) throw new Exception("Failed Decrypt test");
+        var encrypted = await BrowserWASMCrypto.Encrypt(nKey, decryptedData, iv, padding: AESCBCPadding.None);
+        if (!encrypted.SequenceEqual(encryptedData)) throw new Exception("Failed Encrypt test");
+    }
+
+    [TestMethod]
+    public async Task IssueNumber1_BrowserWASMCrypto_Test2()
+    {
+        var decryptedData = Convert.FromBase64String(DecryptInPlace_DecryptedData).Take(48).ToArray();
+        var rawKey = Convert.FromBase64String(DecryptInPlace_Key);
+        using var nKey = await BrowserWASMCrypto.ImportAESCBCKey(rawKey);
+        var iv = Convert.FromBase64String(DecryptInPlace_Iv);
+        var encryptedData = Convert.FromBase64String(DecryptInPlace_EncryptedData).Take(48).ToArray();
+        var decrypted = await BrowserWASMCrypto.Decrypt(nKey, encryptedData, iv, AESCBCPadding.None);
+        if (!decrypted.SequenceEqual(decryptedData)) throw new Exception("Failed Decrypt test");
+        var encrypted = await BrowserWASMCrypto.Encrypt(nKey, decryptedData, iv, padding: AESCBCPadding.None);
+        if (!encrypted.SequenceEqual(encryptedData)) throw new Exception("Failed Encrypt test");
+    }
+
+    [TestMethod]
+    public async Task IssueNumber1_BrowserWASMCrypto_Test3()
+    {
+        var decryptedData = Convert.FromBase64String(TransformFinal_DecryptedData).Take(496).ToArray();
+        var rawKey = Convert.FromBase64String(TransformFinal_Key);
+        using var nKey = await BrowserWASMCrypto.ImportAESCBCKey(rawKey);
+        var iv = Convert.FromBase64String(TransformFinal_Iv);
+        var encryptedData = Convert.FromBase64String(TransformFinal_EncryptedData);
+        // encrypting the known plaintext must give the known ciphertext, and decrypting it back must round-trip
+        var encrypted = await BrowserWASMCrypto.Encrypt(nKey, decryptedData, iv, padding: AESCBCPadding.None);
+        if (!encrypted.SequenceEqual(encryptedData)) throw new Exception("Failed Encrypt test");
+        var decrypted2 = await BrowserWASMCrypto.Decrypt(nKey, encrypted, iv, AESCBCPadding.None);
+        if (!decrypted2.SequenceEqual(decryptedData)) throw new Exception("Failed Decrypt round-trip");
+    }
+
+    // ==================== Cross-Platform Tests (Browser <-> .NET DotNetCrypto) ====================
+    // The endpoints live in PlaywrightTestRunner/CryptographyTestApi.cs, served from the same origin.
+
+    [TestMethod]
+    public async Task CrossPlatform_SHA256_BrowserVsServer() => await DigestVsServer("SHA-256");
+    [TestMethod]
+    public async Task CrossPlatform_SHA384_BrowserVsServer() => await DigestVsServer("SHA-384");
+    [TestMethod]
+    public async Task CrossPlatform_SHA512_BrowserVsServer() => await DigestVsServer("SHA-512");
+    async Task DigestVsServer(string hashName)
+    {
+        var hash = await BrowserWASMCrypto.Digest(hashName, TestMessageBytes);
+        var serverHash = await PostAsByteArrayAsync("api/CryptographyTest/Digest", new { HashName = hashName, Data = TestMessageBytes });
+        if (hash.Length == 0 || !hash.SequenceEqual(serverHash))
+            throw new Exception($"{hashName} hash mismatch between Browser and Server");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_ECDSA_BrowserSignServerVerify()
+    {
+        using var ecdsaKey = await BrowserWASMCrypto.GenerateECDSAKey("P-521");
+        var publicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ecdsaKey);
+        var signature = await BrowserWASMCrypto.Sign(ecdsaKey, TestMessageBytes, "SHA-512");
+        var verified = await PostAndReadAsync<bool>("api/CryptographyTest/VerifySignature",
+            new { Data = TestMessageBytes, Signature = signature, PublicKeySpki = publicKeyBytes });
+        if (!verified) throw new Exception("Server (DotNetCrypto) failed to verify Browser signature - cross-platform ECDSA broken");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_ECDSA_ServerSignBrowserVerify()
+    {
+        var result = await PostAndReadAsync<CrossPlatformSignResult>("api/CryptographyTest/SignData", TestMessageBytes);
+        using var serverPubKey = await BrowserWASMCrypto.ImportECDSAKey(result.PublicKeySpki, "P-521");
+        var verified = await BrowserWASMCrypto.Verify(serverPubKey, TestMessageBytes, result.Signature, "SHA-512");
+        if (!verified) throw new Exception("Browser (BrowserWASMCrypto) failed to verify Server signature - cross-platform ECDSA broken");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_ECDH_SharedSecret()
+    {
+        using var browserEcdh = await BrowserWASMCrypto.GenerateECDHKey("P-521");
+        var browserPubKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(browserEcdh);
+        var serverPubKeyBytes = await Http.GetFromJsonAsync<byte[]>("api/CryptographyTest/ecdh") ?? System.Array.Empty<byte>();
+        using var serverPubKey = await BrowserWASMCrypto.ImportECDHKey(serverPubKeyBytes, "P-521");
+        var browserSecret = await BrowserWASMCrypto.DeriveBits(browserEcdh, serverPubKey);
+        var serverSecret = await PostAsByteArrayAsync("api/CryptographyTest/GetSharedSecret",
+            new { SenderECDHPublicKeyB64 = Convert.ToBase64String(browserPubKeyBytes) });
+        if (browserSecret.Length == 0 || !browserSecret.SequenceEqual(serverSecret))
+            throw new Exception("ECDH shared secret mismatch between Browser and Server");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_AESGCM_BrowserEncryptServerDecrypt()
+    {
+        var secret = BrowserWASMCrypto.RandomBytes(64);
+        using var key = await BrowserWASMCrypto.GenerateAESGCMKey(secret);
+        var encrypted = await BrowserWASMCrypto.Encrypt(key, TestMessageBytes);
+        var decrypted = await PostAsByteArrayAsync("api/CryptographyTest/AesGcmDecrypt", new { Secret = secret, Data = encrypted });
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("Server failed to decrypt Browser AES-GCM ciphertext");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_AESGCM_ServerEncryptBrowserDecrypt()
+    {
+        var secret = BrowserWASMCrypto.RandomBytes(64);
+        var encrypted = await PostAsByteArrayAsync("api/CryptographyTest/AesGcmEncrypt", new { Secret = secret, Data = TestMessageBytes });
+        using var key = await BrowserWASMCrypto.GenerateAESGCMKey(secret);
+        var decrypted = await BrowserWASMCrypto.Decrypt(key, encrypted);
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("Browser failed to decrypt Server AES-GCM ciphertext");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_AESCBC_BrowserEncryptServerDecrypt()
+    {
+        using var key = await BrowserWASMCrypto.GenerateAESCBCKey(256);
+        var rawKey = await BrowserWASMCrypto.ExportAESCBCKey(key);
+        var encrypted = await BrowserWASMCrypto.Encrypt(key, TestMessageBytes);
+        var decrypted = await PostAsByteArrayAsync("api/CryptographyTest/AesCbcDecrypt", new { RawKey = rawKey, Data = encrypted });
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("Server failed to decrypt Browser AES-CBC ciphertext");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_AESCBC_ServerEncryptBrowserDecrypt()
+    {
+        using var key = await BrowserWASMCrypto.GenerateAESCBCKey(256);
+        var rawKey = await BrowserWASMCrypto.ExportAESCBCKey(key);
+        var encrypted = await PostAsByteArrayAsync("api/CryptographyTest/AesCbcEncrypt", new { RawKey = rawKey, Data = TestMessageBytes });
+        var decrypted = await BrowserWASMCrypto.Decrypt(key, encrypted);
+        if (!TestMessageBytes.SequenceEqual(decrypted)) throw new Exception("Browser failed to decrypt Server AES-CBC ciphertext");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_Ed25519_BrowserSignServerVerify()
+    {
+        using var ed25519Key = await BrowserWASMCrypto.GenerateEd25519Key();
+        var publicKeyBytes = await BrowserWASMCrypto.ExportPublicKeySpki(ed25519Key);
+        var signature = await BrowserWASMCrypto.Sign(ed25519Key, TestMessageBytes);
+        var verified = await PostAndReadAsync<bool>("api/CryptographyTest/Ed25519Verify",
+            new { Data = TestMessageBytes, Signature = signature, PublicKeySpki = publicKeyBytes });
+        if (!verified) throw new Exception("Server (DotNetCrypto) failed to verify Browser Ed25519 signature");
+    }
+
+    [TestMethod]
+    public async Task CrossPlatform_Ed25519_ServerSignBrowserVerify()
+    {
+        var result = await PostAndReadAsync<CrossPlatformSignResult>("api/CryptographyTest/Ed25519Sign", TestMessageBytes);
+        using var serverPubKey = await BrowserWASMCrypto.ImportEd25519Key(result.PublicKeySpki);
+        var verified = await BrowserWASMCrypto.Verify(serverPubKey, TestMessageBytes, result.Signature);
+        if (!verified) throw new Exception("Browser (BrowserWASMCrypto) failed to verify Server Ed25519 signature");
+    }
+
+    // ==================== Helpers for HTTP calls ====================
+    class CrossPlatformSignResult
+    {
+        public byte[] Signature { get; set; } = System.Array.Empty<byte>();
+        public byte[] PublicKeySpki { get; set; } = System.Array.Empty<byte>();
+    }
+
+    async Task<byte[]> PostAsByteArrayAsync(string url, object content)
+    {
+        var response = await Http.PostAsJsonAsync(url, content);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<byte[]>() ?? System.Array.Empty<byte>();
+    }
+
+    async Task<T> PostAndReadAsync<T>(string url, object content)
+    {
+        var response = await Http.PostAsJsonAsync(url, content);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<T>())!;
+    }
+
+    // DecryptInPlace data
+    string DecryptInPlace_Key = "2cFlqkbD42rQBNb5uzQJdQ==";
+    string DecryptInPlace_Iv = "GHXPP9GDv7hIbRFhyC/4Kw==";
+    string DecryptInPlace_DecryptedData = "BWZ4nwAAAABC0xyFF0V8DHjPvfGHgeXHJxBvIvXZE0+b/R2z+22wfk+dAAAAAAAAAAAAAAAAAAE=";
+    string DecryptInPlace_EncryptedData = "uTcnCqFNb9YzgFZ4gs3v/+fRosG7Bsw4WQbbIMHcth4ggxwQOY884gCl+nKIWxDbAAAAAAAAAAE=";
+
+    // TransformFinal data
+    string TransformFinal_Key = "QtMchRdFfAx4z73xh4Hlxw==";
+    string TransformFinal_Iv = "/mo5px7WXp0WkpnoEzDxTQ==";
+    string TransformFinal_DecryptedData = "IU3TPlmnHKmzHim+4Sm/VJGcQlVVGi96TN/ahr66VvN/2N3f0i62gobvQ3MwpZzHAeo1vMqe1P0GayTd7NEX3EbZpoCYX72M2ZOPOiVd12xLbNCWyhxcDg0gz8DfFEaCNOxkkMeNJmvThqLmiW+2fv26+Ga4CO8Uy6yDtblTUg0xp1nzrzJW2lXUuSteLQt2rWQ6upyXpb5AmOKXgLXAhXhjSV3+85VQnDH5a/pzDs9Pp5h5V/x6A6yOWqLc+tmR61igJLNiV05iPidvFn0H58S+Lep2otNbw49NGcS+C8uv3FLbbCvqSNYuuJIdazdfJSwsK1D+maay0/Fl4GKAYjODso1sVSbm0TSg6ijl/Hr9Fh91dIOR296gQMP50mg/yxAp/LSYA/LYAK+dV6QmBii/O8P8m+0VV+vmYP/hbHQ/WcC+6aV/90hb63WUc65VY72L7yVDF+/tsDav9Rv1xOgfb8sczWaD1vEvxPdX+vCvbeR4p/msH1pseQYX/NXBPh5tqdHmnjPx5AAN1WkCKf3OvOLC+nrRf+VlUuKWT0g7nRsSXg2BylKp5VASKDdtzHWDND8ugvRXO2Uv4WxsLm+qw7USuvEvpT83Zhk2bg1jt+GWE+UGXoXKZtM5npRqTf1xnqSf2+vq+kLAPg+D4PkFDd6G5nA=";
+    string TransformFinal_EncryptedData = "99FTARJV7R9nAbhLTgCNnqBVCPf9Go2ycLawKraunDZB/Krhv+rZh55LbHF8Q+pxVi8KqAjhog9TeIu6BFqwack8TyVFHHb4zUnXVFkAT8rFteBegaJto/ZHPMzrn9tNaLb2C5riiNwiDAQce1ilizSnu5laK1ej++wHnSV+yMX6Wf93y2vtxX+N3E1rnyfzWfuG7V5tXEo4H3fvtnftGYtS3/BjoXNph+1Gph9t/075aLK9LSPTNQI/nUELRDB0t84o8HAS8/yHagdHbkSQYXFaukUxiEa7QW7Q0lDleS5SuNfTKzOm68TQK8PzJcfgvxIQue+/N7Al8P/4llrfc1O8qjgrR0cXbMk8jWEX2w0rMH6F74NCuvgzpNEWWH1k1IU6NQecS0s9M0U9Irv1cogtsNeJlIuQiNCDFXPzVx4kJ9Xg2y+LYDQTWKaKT21sqQeBzAY3Rqp1cx/nOHhpZToIhKBLLGuFoGnUBgsiIdv7jvou9KcIyVCkAjTj361097fg7pvVPUWrRPnNYyfovlMEiAbXd0iEhqjcPqk9Dz1lGjSEg05RTp8RbH8+neUkh3D6GcCR4F+RxZzumU3e0UetRlefqMdgBnpKgx9HDjzMofru2prK/hwlFMRyUJroXjtJoDY2quM7a0qg3qGOWw==";
+}

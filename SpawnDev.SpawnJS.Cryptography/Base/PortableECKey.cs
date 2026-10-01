@@ -8,6 +8,6 @@
         /// <summary>
         /// The named curve
         /// </summary>
-        public virtual string NamedCurve { get; protected set; }
+        public virtual string NamedCurve { get; protected set; } = "";
     }
 }
