@@ -4,8 +4,8 @@
 		<TargetFrameworks>net10.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<Version>2.1.1</Version>
-		<PackageReleaseNotes>v2.1.1 - Trim and NativeAOT safe, enforced (IsTrimmable, IsAotCompatible, IL warnings are build errors). The 29-test browser suite passes with this library trimmed.</PackageReleaseNotes>
+		<Version>2.1.2</Version>
+		<PackageReleaseNotes>v2.1.2 - Depends on SpawnDev.SpawnJS 3.0.5 (was 3.0.0): its JSTape no longer allocates memory quadratic in the size of a big call. No change of its own; the 29-test browser suite passes.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
@@ -33,7 +33,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.0" />
+		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.5" />
 	</ItemGroup>
 
 </Project>
