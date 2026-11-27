@@ -4,8 +4,8 @@
 		<TargetFrameworks>net10.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<Version>2.1.3</Version>
-		<PackageReleaseNotes>v2.1.3 - Depends on SpawnDev.SpawnJS 3.0.10 (was 3.0.5): WebAuthn JSON converters, trimmed apps about 630 KB smaller (a narrower trim descriptor) and the 3.0.6 - 3.0.8 fixes (see SpawnDev.SpawnJS's CHANGELOG). An app that got SpawnJS only through this package stayed on 3.0.5. No change of its own. v2.1.2 - Depends on SpawnDev.SpawnJS 3.0.5 (was 3.0.0): its JSTape no longer allocates memory quadratic in the size of a big call. No change of its own; the 29-test browser suite passes.</PackageReleaseNotes>
+		<Version>2.1.4</Version>
+		<PackageReleaseNotes>v2.1.4 - Depends on SpawnDev.SpawnJS 3.0.12: SpawnJSRuntime.AppBaseUri works under Node (a .NET WebAssembly console app); it was empty there. v2.1.3 - Depends on SpawnDev.SpawnJS 3.0.10 (was 3.0.5): WebAuthn JSON converters, trimmed apps about 630 KB smaller (a narrower trim descriptor) and the 3.0.6 - 3.0.8 fixes (see SpawnDev.SpawnJS's CHANGELOG). An app that got SpawnJS only through this package stayed on 3.0.5. No change of its own. v2.1.2 - Depends on SpawnDev.SpawnJS 3.0.5 (was 3.0.0): its JSTape no longer allocates memory quadratic in the size of a big call. No change of its own; the 29-test browser suite passes.</PackageReleaseNotes>
 		<GeneratePackageOnBuild>True</GeneratePackageOnBuild>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<EmbedAllSources>true</EmbedAllSources>
@@ -33,7 +33,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.10" />
+		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.12" />
 	</ItemGroup>
 
 </Project>
